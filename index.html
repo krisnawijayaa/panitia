@@ -249,22 +249,36 @@ function stopCamera(){
 function setCam(on, txt){ $("camstat").classList.toggle("live", on); $("camtxt").textContent = txt; $("camBtn").style.display = on ? "none" : "block"; }
 $("camBtn").onclick = startCamera;
 const cv = document.createElement("canvas"), cx = cv.getContext("2d", { willReadFrequently:true });
-function tick(){
+let detector = null;
+try{ if("BarcodeDetector" in window) detector = new BarcodeDetector({ formats:["qr_code"] }); }catch(e){}
+let lastScan = 0, busy = false;
+async function tick(){
   if(!scanning) return;
-  const v = $("video");
-  if(v.readyState === v.HAVE_ENOUGH_DATA && window.jsQR){
-    cv.width = v.videoWidth; cv.height = v.videoHeight;
-    cx.drawImage(v, 0, 0, cv.width, cv.height);
-    const img = cx.getImageData(0, 0, cv.width, cv.height);
-    const r = jsQR(img.data, img.width, img.height, { inversionAttempts:"dontInvert" });
-    if(r && r.data && r.data !== lastRaw){ lastRaw = r.data; processCode(r.data); return; }
+  const v = $("video"), now = performance.now();
+  if(!busy && now - lastScan > 120 && v.readyState >= 2 && v.videoWidth){
+    lastScan = now; busy = true;
+    try{
+      let data = "";
+      if(detector){ const r = await detector.detect(v); if(r.length) data = r[0].rawValue; }
+      if(!data && window.jsQR){
+        const s = Math.min(1, 640 / v.videoWidth);
+        cv.width = Math.round(v.videoWidth * s); cv.height = Math.round(v.videoHeight * s);
+        cx.drawImage(v, 0, 0, cv.width, cv.height);
+        const d = cx.getImageData(0, 0, cv.width, cv.height);
+        const r = jsQR(d.data, d.width, d.height, { inversionAttempts:"attemptBoth" });
+        if(r) data = r.data;
+      }
+      if(data && data !== lastRaw){ lastRaw = data; processCode(data); }
+    }catch(e){}
+    busy = false;
   }
-  requestAnimationFrame(tick);
+  if(scanning) requestAnimationFrame(tick);
 }
 
 /* ---- Check-in ---- */
 function processCode(raw){
-  const code = String(raw).trim().toUpperCase();
+  let code = String(raw).trim().toUpperCase();
+  if(!GUESTS[code]){ const m = code.match(/SK-\d+/); if(m) code = m[0]; }
   if(!GUESTS[code]){
     $("err-scan").textContent = "Kode “" + code.slice(0, 20) + "” tidak ditemukan. Periksa kode lalu coba lagi.";
     lastRaw = ""; if(stream && !scanning){ scanning = true; requestAnimationFrame(tick); }
@@ -272,6 +286,7 @@ function processCode(raw){
     return;
   }
   $("err-scan").textContent = "";
+  try{ navigator.vibrate && navigator.vibrate(80); }catch(e){}
   const done = checkins[code];
   const when = done ? new Date(done) : new Date();
   if(!done){ checkins[code] = when.toISOString(); store.set("sk_checkins", checkins); }

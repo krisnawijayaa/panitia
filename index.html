@@ -137,7 +137,7 @@ input:focus-visible,button:focus-visible{outline:2px solid var(--gold);outline-o
       <h2>Check-In Tamu</h2>
       <p class="sub">Pastikan kamera aktif dan arahkan<br>ke QR Code tamu.</p>
       <div class="cam" id="cam">
-        <video id="video" playsinline muted></video>
+        <video id="video" autoplay playsinline webkit-playsinline muted></video>
         <i class="corner c1"></i><i class="corner c2"></i><i class="corner c3"></i><i class="corner c4"></i>
         <button class="camBtn" id="camBtn" type="button">Nyalakan Kamera</button>
         <div class="status" id="camstat"><span class="dot"></span><span id="camtxt">Kamera mati</span></div>
@@ -171,7 +171,7 @@ input:focus-visible,button:focus-visible{outline:2px solid var(--gold);outline-o
           <div><small id="resTimeLbl">Waktu Check-In</small><b id="resTime">-</b></div>
         </div>
       </div>
-      <button class="btn" id="btn-back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/></svg>Kembali</button>
+      <button class="btn" id="btn-back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"><path d="M3 11l9-8 9 8M5 10v10h5v-6h4v6h5V10"/></svg><span id="backLbl">Kembali</span></button>
     </div>
   </section>
 </main>
@@ -251,7 +251,7 @@ $("camBtn").onclick = startCamera;
 const cv = document.createElement("canvas"), cx = cv.getContext("2d", { willReadFrequently:true });
 let detector = null;
 try{ if("BarcodeDetector" in window) detector = new BarcodeDetector({ formats:["qr_code"] }); }catch(e){}
-let lastScan = 0, busy = false;
+let lastScan = 0, busy = false, lastSeen = 0;
 async function tick(){
   if(!scanning) return;
   const v = $("video"), now = performance.now();
@@ -259,7 +259,7 @@ async function tick(){
     lastScan = now; busy = true;
     try{
       let data = "";
-      if(detector){ const r = await detector.detect(v); if(r.length) data = r[0].rawValue; }
+      if(detector){ try{ const r = await detector.detect(v); if(r.length) data = r[0].rawValue; }catch(e){ detector = null; } }
       if(!data && window.jsQR){
         const s = Math.min(1, 640 / v.videoWidth);
         cv.width = Math.round(v.videoWidth * s); cv.height = Math.round(v.videoHeight * s);
@@ -268,7 +268,8 @@ async function tick(){
         const r = jsQR(d.data, d.width, d.height, { inversionAttempts:"attemptBoth" });
         if(r) data = r.data;
       }
-      if(data && data !== lastRaw){ lastRaw = data; processCode(data); }
+      if(data){ lastSeen = now; if(data !== lastRaw){ lastRaw = data; processCode(data); } }
+      else if(now - lastSeen > 1500) lastRaw = "";
     }catch(e){}
     busy = false;
   }
@@ -297,7 +298,7 @@ function processCode(raw){
   $("resName").textContent = GUESTS[code];
   $("resTime").textContent = wib(when);
   $("code").value = "";
-  show("s-ok");
+  show("s-ok"); startCountdown();
 }
 $("btn-checkin").onclick = () => {
   const v = $("code").value.trim();
@@ -305,7 +306,21 @@ $("btn-checkin").onclick = () => {
   processCode(v);
 };
 $("code").onkeydown = e => { if(e.key === "Enter") $("btn-checkin").click(); };
-$("btn-back").onclick = () => { lastRaw = ""; $("err-scan").textContent = ""; show("s-scan"); };
+let backTimer = null;
+function startCountdown(){
+  clearInterval(backTimer);
+  let n = 3; $("backLbl").textContent = "Kembali (" + n + ")";
+  backTimer = setInterval(() => {
+    n--;
+    if(n <= 0){ goBack(); return; }
+    $("backLbl").textContent = "Kembali (" + n + ")";
+  }, 1000);
+}
+function goBack(){
+  clearInterval(backTimer); $("backLbl").textContent = "Kembali";
+  lastSeen = performance.now(); $("err-scan").textContent = ""; show("s-scan");
+}
+$("btn-back").onclick = goBack;
 
 $("btn-photo").onclick = () => $("photo").click();
 $("photo").onchange = e => {
@@ -323,7 +338,10 @@ $("photo").onchange = e => {
   img.src = url; e.target.value = "";
 };
 
-document.addEventListener("visibilitychange", () => { if(document.hidden) stopCamera(); });
+document.addEventListener("visibilitychange", () => {
+  if(document.hidden) stopCamera();
+  else if($("s-scan").classList.contains("on") && !stream) startCamera();
+});
 show(loggedIn ? "s-scan" : "s-login");
 </script>
 </body>
